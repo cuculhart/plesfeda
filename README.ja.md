@@ -2,6 +2,8 @@
 
 **[Live demo](https://cuculhart.github.io/plesfeda/)** — インストール不要・ブラウザだけで動きます
 
+![Plesfeda のボード — WBS ツリーと依存線・クリティカルパス](docs/board.png)
+
 **本物の WBS を組み立てるためのボード** — まず分解、日程はあと。
 
 世に「WBSツール」と呼ばれるものの多くは、実際にはガントチャート作成ツールです。

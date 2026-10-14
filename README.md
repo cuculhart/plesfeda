@@ -1,5 +1,9 @@
 # Plesfeda
 
+**[Live demo](https://cuculhart.github.io/plesfeda/)** — runs in your browser, no install
+
+![Plesfeda board — a WBS tree with dependency edges and critical path](docs/board-en.png)
+
 A board for building **real Work Breakdown Structures** — breakdown first, schedule later.
 
 Most so-called "WBS tools" are actually Gantt chart editors. Plesfeda focuses on what a
@@ -19,7 +23,7 @@ Excel. Plesfeda is built to scratch exactly those itches: reparent a whole subtr
 by dragging, set your own holidays and working hours, and keep everything local in
 plain JSON.
 
-日本語版: [readme.jp.md](readme.jp.md)
+日本語版: [README.ja.md](README.ja.md)
 
 ## Concept
 
