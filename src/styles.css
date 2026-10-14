@@ -1,0 +1,797 @@
+html,
+body,
+#root {
+	margin: 0;
+	height: 100%;
+	overflow: hidden;
+	font-family:
+		'Noto Sans JP', 'Segoe UI', 'Hiragino Kaku Gothic ProN',
+		'Yu Gothic UI', sans-serif;
+}
+
+/* ---- theme variables (sethera-compatible palettes) ---- */
+
+.app {
+	position: fixed;
+	inset: 0;
+
+	/* light (default) */
+	--bg: #faf9f6;
+	--panel: rgba(255, 255, 255, 0.92);
+	--panel-border: #d0d0d0;
+	--text: #1c1917;
+	--sub: #666;
+	--btn: #ffffff;
+	--btn-border: #c8c8c8;
+	--btn-hover: #f0f0f0;
+	--btn-active: #e3ecff;
+	--btn-active-border: #4466cc;
+	--edge: #a39e93;
+	/* node content colors stay fixed across themes (paper metaphor) */
+	--node-fill: #fef3c7;
+	--node-border: #e0d77a;
+	--node-text: #1c1917;
+	--ghost-border: #a8a29e;
+	--ghost-text: #78716c;
+	--ghost-fill: rgba(255, 255, 255, 0.55);
+	--select: #4466cc;
+	--danger: #c92a2a;
+	--dep: #b45309;
+	--critical: #d97706;
+}
+
+.app.quiet {
+	--bg: #f0ede7;
+	--panel: rgba(246, 243, 238, 0.96);
+	--panel-border: #d8d2c7;
+	--text: #4a4437;
+	--sub: #857c6b;
+	--btn: #edeae3;
+	--btn-border: #d8d2c7;
+	--btn-hover: #e4dfd4;
+	--btn-active: #ddd6c9;
+	--btn-active-border: #a89f8e;
+	--edge: #b6ae9d;
+	--ghost-border: #b0a894;
+	--ghost-text: #9a917d;
+	--ghost-fill: rgba(246, 243, 238, 0.55);
+	--select: #a89f8e;
+	--dep: #b08c5a;
+	--critical: #c2a06a;
+}
+
+.app.dark {
+	--bg: #1b1e26;
+	--panel: rgba(35, 38, 46, 0.97);
+	--panel-border: #3a3f4a;
+	--text: #e6e3da;
+	--sub: #9aa0ab;
+	--btn: #2c313b;
+	--btn-border: #464c58;
+	--btn-hover: #363c47;
+	--btn-active: #3d4454;
+	--btn-active-border: #6a7384;
+	--edge: #5a6474;
+	--ghost-border: #6a7384;
+	--ghost-text: #8b93a3;
+	--ghost-fill: rgba(35, 38, 46, 0.55);
+	--select: #7fa0f0;
+	--dep: #e0a458;
+	--critical: #f0a860;
+}
+
+/* ---- board ---- */
+
+.react-flow {
+	background: var(--bg);
+}
+
+.react-flow__background pattern circle {
+	fill: var(--ghost-border);
+}
+
+.wbs-edge .react-flow__edge-path {
+	stroke: var(--edge);
+	stroke-width: 1.5;
+}
+
+.slot-edge .react-flow__edge-path {
+	stroke-dasharray: 4 4;
+}
+
+.dep-edge .react-flow__edge-path {
+	stroke: var(--dep);
+	stroke-width: 1.8;
+}
+
+.dep-edge.critical .react-flow__edge-path {
+	stroke: var(--critical);
+	stroke-width: 2.5;
+	stroke-dasharray: none;
+}
+
+.dep-edge.err .react-flow__edge-path {
+	stroke: var(--danger);
+	stroke-width: 2;
+}
+
+.dep-edge.selected .react-flow__edge-path {
+	stroke: var(--select);
+}
+
+.wbs-handle {
+	opacity: 0;
+	pointer-events: none;
+}
+
+/* ---- task node ---- */
+
+.task-node {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 1px;
+	width: 176px;
+	height: 60px;
+	padding: 5px 10px;
+	box-sizing: border-box;
+	background: var(--node-fill);
+	border: 1px solid var(--node-border);
+	border-radius: 8px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+	color: var(--node-text);
+	font-size: 13px;
+}
+
+.task-node.selected {
+	outline: 2px solid var(--select);
+	outline-offset: 2px;
+}
+
+.task-node.critical {
+	border-color: var(--critical);
+	box-shadow:
+		0 0 0 3px color-mix(in srgb, var(--critical) 45%, transparent),
+		0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.task-node.dep-err {
+	box-shadow:
+		0 0 0 2px var(--danger),
+		0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.task-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.task-code {
+	font-size: 10px;
+	font-weight: 500;
+	line-height: 1.2;
+	color: color-mix(in srgb, var(--node-text) 55%, transparent);
+}
+
+.task-name-input,
+.slot-input {
+	flex: 1;
+	min-width: 0;
+	font: inherit;
+	border: none;
+	background: transparent;
+	outline: none;
+	color: inherit;
+}
+
+.task-effort {
+	min-height: 16px;
+	line-height: 16px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	border-radius: 4px;
+}
+
+.task-effort.editable {
+	cursor: text;
+}
+
+.task-effort.editable:hover {
+	background: rgba(255, 255, 255, 0.5);
+}
+
+.task-effort.rolled {
+	color: color-mix(in srgb, var(--node-text) 70%, transparent);
+	font-weight: 600;
+}
+
+.task-effort.rolled::before {
+	content: 'Σ';
+	font-size: 10px;
+	margin-right: 2px;
+	opacity: 0.6;
+}
+
+.task-effort.rolled:empty::before {
+	content: none;
+}
+
+.task-effort-input {
+	width: 100%;
+	box-sizing: border-box;
+	font: inherit;
+	font-weight: 700;
+	border: 1px solid var(--node-border);
+	border-radius: 5px;
+	background: #fff;
+	outline: none;
+}
+
+.task-break,
+.task-delete {
+	position: absolute;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	font-size: 11px;
+	line-height: 1;
+	border: 1px solid var(--node-border);
+	border-radius: 50%;
+	background: var(--node-fill);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.1s;
+}
+
+.task-break {
+	right: 4px;
+	bottom: -8px;
+}
+
+.task-delete {
+	right: -7px;
+	top: -7px;
+	font-size: 12px;
+}
+
+.task-node:hover .task-break,
+.task-node.selected .task-break,
+.task-node.open .task-break,
+.task-node:hover .task-delete,
+.task-node.selected .task-delete {
+	opacity: 1;
+}
+
+.task-node.open .task-break {
+	background: var(--node-border);
+}
+
+/* ---- slot nodes (breakdown input) ---- */
+
+/* RF disables pointer events (inline style) on nodes whose
+   selectable/draggable/focusable are all false — re-enable so slots can
+   be clicked. !important is required to beat the inline style. */
+.react-flow__node-slot {
+	pointer-events: all !important;
+}
+
+.slot-node {
+	display: flex;
+	align-items: center;
+	width: 128px;
+	height: 40px;
+	padding: 0 10px;
+	box-sizing: border-box;
+	border-radius: 8px;
+	font-size: 12px;
+}
+
+.slot-node.ghost {
+	border: 1.5px dashed var(--ghost-border);
+	color: var(--ghost-text);
+	background: var(--ghost-fill);
+	cursor: pointer;
+	justify-content: center;
+}
+
+.slot-node.ghost:hover {
+	border-color: var(--select);
+	color: var(--select);
+}
+
+.slot-node.input {
+	border: 1.5px dashed var(--select);
+	background: var(--panel);
+	color: var(--text);
+}
+
+/* ---- toolbar ---- */
+
+.toolbar {
+	position: absolute;
+	top: 12px;
+	left: 12px;
+	z-index: 300;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+	width: 160px;
+	padding: 10px;
+	background: var(--panel);
+	border: 1px solid var(--panel-border);
+	border-radius: 10px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+	color: var(--text);
+}
+
+.toolbar .brand {
+	font-weight: 700;
+	font-size: 14px;
+	padding: 2px 4px;
+}
+
+.toolbar .brand em {
+	display: block;
+	font-style: normal;
+	font-weight: 400;
+	font-size: 0.75em;
+	color: var(--sub);
+}
+
+.toolbar button,
+.toolbar select {
+	padding: 4px 10px;
+	border: 1px solid var(--btn-border);
+	border-radius: 6px;
+	background: var(--btn);
+	color: var(--text);
+	cursor: pointer;
+	font-size: 13px;
+	text-align: left;
+}
+
+.toolbar button:hover:not(:disabled) {
+	background: var(--btn-hover);
+}
+
+.toolbar button.danger {
+	border-color: var(--danger);
+	color: var(--danger);
+}
+
+.toolbar button.active {
+	background: var(--btn-active);
+	border-color: var(--btn-active-border);
+}
+
+.toolbar button:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.toolbar .tb-label {
+	font-size: 11px;
+	color: var(--sub);
+	margin-top: 4px;
+	padding: 0 4px;
+}
+
+.toolbar .tb-proj {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--critical);
+	padding: 2px 4px;
+	border-top: 1px solid var(--panel-border);
+}
+
+.toolbar .tb-hint {
+	font-size: 10px;
+	color: var(--sub);
+	padding: 4px;
+	border-top: 1px solid var(--panel-border);
+}
+
+.dep-banner {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 400;
+	padding: 6px 14px;
+	border-radius: 8px;
+	background: var(--danger);
+	color: #fff;
+	font-size: 13px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+/* ---- gantt ---- */
+
+.gantt-wrap {
+	position: fixed;
+	inset: 0;
+	z-index: 450;
+	background: var(--bg);
+	display: flex;
+	flex-direction: column;
+}
+
+.gantt-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--panel-border);
+	background: var(--panel);
+	color: var(--text);
+	font-size: 13px;
+}
+
+.gantt-brand {
+	font-size: 14px;
+	color: var(--text);
+}
+
+.gantt-head .gantt-sub {
+	color: var(--sub);
+	font-size: 12px;
+	margin-right: auto;
+}
+
+.gantt-head .gantt-sub + .gantt-sub {
+	margin-right: 0;
+}
+
+.gantt-head button {
+	padding: 4px 10px;
+	border: 1px solid var(--btn-border);
+	border-radius: 6px;
+	background: var(--btn);
+	color: var(--text);
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.gantt-scroll {
+	flex: 1;
+	overflow: auto;
+	padding: 12px;
+}
+
+.gantt-grid {
+	display: grid;
+	border-top: 1px solid var(--panel-border);
+	border-left: 1px solid var(--panel-border);
+	width: max-content;
+	font-size: 11px;
+	color: var(--text);
+}
+
+.g-page-no {
+	font-size: 10px;
+	color: var(--sub);
+	text-align: right;
+	margin: 4px 0 28px;
+}
+
+.g-label {
+	box-sizing: border-box;
+	height: 19px;
+	line-height: 14px;
+	padding: 2px 8px;
+	border-right: 1px solid var(--panel-border);
+	border-bottom: 1px solid var(--panel-border);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 11px;
+	position: sticky;
+	left: 0;
+	background: var(--panel);
+	z-index: 2;
+}
+
+.g-label.g-head {
+	font-weight: 600;
+}
+
+.g-code {
+	font-size: 9px;
+	color: var(--sub);
+	margin-right: 5px;
+}
+
+.g-h {
+	box-sizing: border-box;
+	height: 20px;
+	line-height: 15px;
+	text-align: center;
+	border-right: 1px solid var(--panel-border);
+	border-bottom: 1px solid var(--panel-border);
+	padding: 2px 0;
+	background: var(--panel);
+	font-size: 10px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.g-day {
+	cursor: pointer;
+}
+
+.g-day:hover {
+	background: var(--btn-hover);
+}
+
+.g-h.ex,
+.g-c.ex {
+	background: color-mix(in srgb, var(--text) 10%, var(--bg));
+	color: var(--sub);
+}
+
+.g-h.hol,
+.g-c.hol {
+	background: color-mix(in srgb, #e07080 18%, var(--bg));
+}
+
+.g-day.hol {
+	color: var(--danger);
+	font-weight: 700;
+}
+
+.g-dow {
+	font-size: 8px;
+	color: var(--sub);
+	margin-left: 2px;
+}
+
+.g-hour {
+	font-size: 9px;
+}
+
+.g-c {
+	height: 18px;
+	border-right: 1px solid var(--panel-border);
+	border-bottom: 1px solid var(--panel-border);
+	font-size: 11px;
+	line-height: 18px;
+	text-align: center;
+}
+
+.g-c.fill {
+	background: var(--select);
+}
+
+.g-c.sum {
+	background: color-mix(in srgb, var(--select) 40%, transparent);
+}
+
+.g-c.fill.crit,
+.g-c.sum.crit {
+	background: var(--critical);
+}
+
+@page {
+	size: landscape;
+	margin: 8mm;
+}
+
+@media print {
+	html,
+	body,
+	#root {
+		overflow: visible;
+		height: auto;
+	}
+
+	.app.gantt-open {
+		position: static;
+	}
+
+	.gantt-grid,
+	.gantt-grid * {
+		print-color-adjust: exact;
+		-webkit-print-color-adjust: exact;
+	}
+
+	.gantt-wrap {
+		position: static;
+	}
+
+	.gantt-scroll {
+		overflow: visible;
+		padding: 0;
+	}
+
+	.gantt-page {
+		page-break-after: always;
+	}
+
+	.gantt-page:last-child {
+		page-break-after: auto;
+	}
+
+	/* holiday-toggle hint is meaningless on paper */
+	.gantt-head .g-hint {
+		display: none;
+	}
+
+	.gantt-head button {
+		display: none;
+	}
+
+	.g-label {
+		position: static;
+	}
+
+	/* while the gantt overlay is open, print only the gantt */
+	.gantt-open .react-flow,
+	.gantt-open .toolbar,
+	.gantt-open .dep-banner {
+		display: none;
+	}
+}
+
+/* ---- modal ---- */
+
+.modal-back {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.25);
+	z-index: 500;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.modal {
+	width: 340px;
+	padding: 18px;
+	background: var(--panel);
+	border: 1px solid var(--panel-border);
+	border-radius: 12px;
+	box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+	color: var(--text);
+}
+
+.modal h2 {
+	margin: 0 0 4px;
+	font-size: 15px;
+}
+
+.modal-sub {
+	font-size: 12px;
+	color: var(--sub);
+	margin-bottom: 14px;
+}
+
+.modal-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.modal-actions button {
+	padding: 6px 10px;
+	border: 1px solid var(--btn-border);
+	border-radius: 6px;
+	background: var(--btn);
+	color: var(--text);
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.modal-actions button:hover {
+	background: var(--btn-hover);
+}
+
+.modal-actions button.danger {
+	border-color: var(--danger);
+	color: var(--danger);
+}
+
+.modal .field {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 6px 0;
+	font-size: 13px;
+}
+
+.modal .field label {
+	color: var(--sub);
+}
+
+.modal .field select {
+	min-width: 140px;
+	padding: 4px 8px;
+	border: 1px solid var(--btn-border);
+	border-radius: 6px;
+	background: var(--btn);
+	color: var(--text);
+	font-size: 13px;
+}
+
+.modal .about-text {
+	font-size: 12.5px;
+	line-height: 1.6;
+	margin: 0 0 10px;
+}
+
+.modal .about-name {
+	color: var(--sub);
+}
+
+.modal .modal-sec {
+	margin: 10px 0 2px;
+	padding-top: 10px;
+	border-top: 1px solid var(--panel-border);
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--sub);
+	letter-spacing: 0.4px;
+}
+
+.modal .field input[type='color'] {
+	width: 48px;
+	height: 26px;
+	padding: 2px;
+	border: 1px solid var(--btn-border);
+	border-radius: 6px;
+	background: var(--btn);
+	cursor: pointer;
+}
+
+.modal button.link {
+	border: none;
+	background: none;
+	color: var(--sub);
+	text-decoration: underline;
+	cursor: pointer;
+	font-size: 12px;
+	padding: 0;
+}
+
+.modal button.link:hover {
+	color: var(--text);
+}
+
+.about-rows {
+	margin: 12px 0;
+	border-top: 1px solid var(--panel-border);
+}
+
+.about-row {
+	display: flex;
+	justify-content: space-between;
+	padding: 7px 0;
+	border-bottom: 1px solid var(--panel-border);
+	font-size: 12.5px;
+}
+
+.about-row .k {
+	color: var(--sub);
+}
+
+/* ---- react-flow controls ---- */
+
+.react-flow__controls {
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.react-flow__controls-button {
+	background: var(--btn);
+	border-bottom: 1px solid var(--btn-border);
+	fill: var(--text);
+}
+
+.react-flow__controls-button:hover {
+	background: var(--btn-hover);
+}
