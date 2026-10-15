@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react'
-import { childrenOf, type Schedule, type Task } from './model'
+import type { Schedule, Task } from './model'
 import type { Unit } from './board-context'
+import {
+	calendarDays,
+	wbsRows,
+	type DayCol,
+	type WbsRow,
+} from './export'
 
 export type GanttCfg = {
 	/** baseline date YYYY-MM-DD (roots start here) */
@@ -165,18 +171,6 @@ export function GanttDialog({
 
 /* ---------------- gantt view ---------------- */
 
-type Row = { task: Task; code: string; leaf: boolean }
-type DayCol = {
-	iso: string
-	year: number
-	month: number
-	day: number
-	dow: number
-	excl: boolean
-	hol: boolean
-	wdIdx: number
-}
-
 const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
 export function GanttView({
@@ -198,58 +192,13 @@ export function GanttView({
 	onClose: () => void
 	t: (en: string) => string
 }) {
-	const rows = useMemo<Row[]>(() => {
-		const out: Row[] = []
-		const walk = (list: Task[], prefix: string) =>
-			list.forEach((k, i) => {
-				const code = prefix ? `${prefix}.${i + 1}` : `${i + 1}`
-				out.push({ task: k, code, leaf: childrenOf(tasks, k.id).length === 0 })
-				walk(childrenOf(tasks, k.id), code)
-			})
-		walk(childrenOf(tasks, null), '')
-		return out
-	}, [tasks])
-
-	const isHoliday = (isoS: string) => cfg.holidays.includes(isoS)
-	const isExcl = (d: Date, isoS: string) => {
-		const dow = d.getDay()
-		return (
-			(cfg.exSat && dow === 6) ||
-			(cfg.exSun && dow === 0) ||
-			isHoliday(isoS)
-		)
-	}
+	const rows = useMemo<WbsRow[]>(() => wbsRows(tasks), [tasks])
 
 	// calendar days from baseline until the needed working days are covered
-	const days = useMemo<DayCol[]>(() => {
-		const needWd = Math.max(
-			5,
-			unit === 'd'
-				? Math.ceil(sched.project)
-				: Math.ceil(sched.project / cfg.hoursPerDay),
-		)
-		const out: DayCol[] = []
-		const cur = new Date(`${cfg.base}T00:00:00`)
-		let wd = 0
-		while (wd < needWd && out.length < 400) {
-			const s = iso(cur)
-			const ex = isExcl(cur, s)
-			out.push({
-				iso: s,
-				year: cur.getFullYear(),
-				month: cur.getMonth() + 1,
-				day: cur.getDate(),
-				dow: cur.getDay(),
-				excl: ex,
-				hol: isHoliday(s),
-				wdIdx: wd,
-			})
-			if (!ex) wd++
-			cur.setDate(cur.getDate() + 1)
-		}
-		return out
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [cfg, unit, sched.project])
+	const days = useMemo<DayCol[]>(
+		() => calendarDays(cfg, unit, sched.project),
+		[cfg, unit, sched.project],
+	)
 
 	const H = unit === 'h' ? cfg.hoursPerDay : 1
 	const colPx = unit === 'h' ? 16 : 30
@@ -266,10 +215,10 @@ export function GanttView({
 	const dayChunks: DayCol[][] = []
 	for (let i = 0; i < days.length; i += daysPerPage)
 		dayChunks.push(days.slice(i, i + daysPerPage))
-	const rowChunks: Row[][] = []
+	const rowChunks: WbsRow[][] = []
 	for (let i = 0; i < rows.length; i += rowsPerPage)
 		rowChunks.push(rows.slice(i, i + rowsPerPage))
-	const pages: { pgDays: DayCol[]; pgRows: Row[] }[] = []
+	const pages: { pgDays: DayCol[]; pgRows: WbsRow[] }[] = []
 	for (const pgDays of dayChunks)
 		for (const pgRows of rowChunks) pages.push({ pgDays, pgRows })
 
@@ -295,7 +244,7 @@ export function GanttView({
 	}
 
 	const renderGrid = (
-		{ pgDays, pgRows }: { pgDays: DayCol[]; pgRows: Row[] },
+		{ pgDays, pgRows }: { pgDays: DayCol[]; pgRows: WbsRow[] },
 		pi: number,
 	) => {
 		const years = span(pgDays, (d) => d.year)

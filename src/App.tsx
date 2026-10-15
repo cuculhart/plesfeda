@@ -13,12 +13,13 @@ import { makeT, type Lang } from './i18n'
 import { buildGraph, NODE_H, NODE_W, type BoardNode, type Dir } from './layout'
 import {
 	canReparent,
-	childrenOf,
-	deleteTask,
+	deleteTasks,
+	isDescendant,
 	newId,
 	nextOrder,
 	sanitizeTasks,
 	schedule,
+	topmost,
 	type Task,
 } from './model'
 import { SlotNode, TaskNode } from './nodes/task-node'
@@ -29,10 +30,17 @@ import {
 	sanitizeGanttCfg,
 	type GanttCfg,
 } from './gantt'
+import {
+	exportRows,
+	issueRows,
+	toCsv,
+	toMermaid,
+	toTsv,
+} from './export'
 
 const nodeTypes = { task: TaskNode, slot: SlotNode }
 
-const APP_VERSION = '0.1.0'
+const APP_VERSION = '0.2.0'
 
 type Theme = 'system' | 'light' | 'quiet' | 'dark'
 type ResolvedTheme = Exclude<Theme, 'system'>
@@ -55,6 +63,7 @@ type UiColors = {
 	nodeBorder?: string
 	nodeText?: string
 	edge?: string
+	toolbarBg?: string
 }
 
 type UiState = {
@@ -81,6 +90,7 @@ function loadUi(): UiState {
 					'nodeBorder',
 					'nodeText',
 					'edge',
+					'toolbarBg',
 				] as const) {
 					const v = (o.colors as Record<string, unknown>)[k]
 					if (typeof v === 'string') colors[k] = v
@@ -119,6 +129,12 @@ function COLOR_DEFAULTS(theme: ResolvedTheme): Required<UiColors> {
 				: theme === 'quiet'
 					? '#b6ae9d'
 					: '#a39e93',
+		toolbarBg:
+			theme === 'dark'
+				? '#23262e'
+				: theme === 'quiet'
+					? '#f6f3ee'
+					: '#ffffff',
 	}
 }
 
@@ -138,8 +154,8 @@ function loadTasks(): Task[] {
 function Board() {
 	const [tasks, setTasks] = useState<Task[]>(loadTasks)
 	const [editingParent, setEditingParent] = useState<string | null>(null)
-	const [selectedId, setSelectedId] = useState<string | null>(null)
-	const [deleteId, setDeleteId] = useState<string | null>(null)
+	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+	const [deleteIds, setDeleteIds] = useState<string[] | null>(null)
 	const [depPending, setDepPending] = useState<string | null>(null)
 	const [selDep, setSelDep] = useState<string | null>(null)
 	const [depDel, setDepDel] = useState<string | null>(null)
@@ -156,6 +172,8 @@ function Board() {
 	)
 	const [showGantt, setShowGantt] = useState(false)
 	const [ganttDlg, setGanttDlg] = useState(false)
+	const [showExport, setShowExport] = useState(false)
+	const [exportText, setExportText] = useState<string | null>(null)
 	const t = useMemo(() => makeT(lang), [lang])
 	const [osDark, setOsDark] = useState(
 		() => window.matchMedia('(prefers-color-scheme: dark)').matches,
@@ -208,10 +226,18 @@ function Board() {
 	// drop them so a stale editingParent can't create orphan children
 	useEffect(() => {
 		const ids = new Set(tasks.map((x) => x.id))
-		if (selectedId && !ids.has(selectedId)) setSelectedId(null)
+		setSelectedIds((prev) => {
+			const next = new Set([...prev].filter((id) => ids.has(id)))
+			return next.size === prev.size ? prev : next
+		})
+		if (deleteIds) {
+			const alive = deleteIds.filter((id) => ids.has(id))
+			if (alive.length !== deleteIds.length)
+				setDeleteIds(alive.length > 0 ? alive : null)
+		}
 		if (editingParent && !ids.has(editingParent)) setEditingParent(null)
 		if (depPending && !ids.has(depPending)) setDepPending(null)
-	}, [tasks, selectedId, editingParent, depPending])
+	}, [tasks, deleteIds, editingParent, depPending])
 
 	useEffect(() => {
 		localStorage.setItem(
@@ -219,6 +245,24 @@ function Board() {
 			JSON.stringify({ theme, dir, lang, colors, unit, gantt: ganttCfg }),
 		)
 	}, [theme, dir, lang, colors, unit, ganttCfg])
+
+	/** Bulk delete: normalize to topmost so overlapping subtrees aren't
+	 *  double-applied. The promote/subtree prompt only appears when some
+	 *  descendant is NOT selected — children already in the selection were
+	 *  explicitly marked for deletion, so asking about them is noise. */
+	const requestDeleteIds = useCallback(
+		(ids: string[]) => {
+			const set = new Set(ids)
+			const tops = topmost(tasks, ids)
+			if (tops.length === 0) return
+			const needsConfirm = tops.some((id) =>
+				tasks.some((t) => !set.has(t.id) && isDescendant(tasks, t.id, id)),
+			)
+			if (needsConfirm) setDeleteIds(tops)
+			else commit(deleteTasks(tasks, tops, 'subtree'))
+		},
+		[tasks, commit],
+	)
 
 	const actions = useMemo<BoardActions>(
 		() => ({
@@ -255,12 +299,9 @@ function Board() {
 				])
 			},
 			deactivateSlot: () => setEditingParent(null),
-			requestDelete: (id) => {
-				if (childrenOf(tasks, id).length > 0) setDeleteId(id)
-				else commit(deleteTask(tasks, id, 'subtree'))
-			},
+			requestDelete: (id) => requestDeleteIds([id]),
 		}),
-		[tasks, editingParent, commit, t, unit],
+		[tasks, editingParent, commit, t, unit, requestDeleteIds],
 	)
 
 	const sched = useMemo(() => schedule(tasks), [tasks])
@@ -275,15 +316,21 @@ function Board() {
 	const [nodes, setNodes] = useState<BoardNode[]>(graph.nodes)
 	useEffect(() => {
 		setNodes(
-			graph.nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
+			graph.nodes.map((n) => ({ ...n, selected: selectedIds.has(n.id) })),
 		)
-	}, [graph, selectedId, setNodes])
+	}, [graph, selectedIds, setNodes])
 
 	const onNodesChange = useCallback(
 		(changes: NodeChange<BoardNode>[]) => {
 			for (const c of changes) {
 				if (c.type === 'select')
-					setSelectedId(c.selected && !c.id.startsWith('slot:') ? c.id : null)
+					setSelectedIds((prev) => {
+						const next = new Set(prev)
+						if (c.selected && !c.id.startsWith('slot:'))
+							next.add(c.id)
+						else next.delete(c.id)
+						return next
+					})
 			}
 			// apply position changes during drag so the node follows the pointer
 			setNodes((nds) =>
@@ -350,14 +397,12 @@ function Board() {
 			setNodes(
 				graph.nodes.map((n) => ({
 					...n,
-					selected: n.id === selectedId,
+					selected: selectedIds.has(n.id),
 				})),
 			)
 		},
-		[graph.nodes, tasks, commit, selectedId],
+		[graph.nodes, tasks, commit, selectedIds],
 	)
-
-	const requestDelete = actions.requestDelete
 
 	const addDep = useCallback(
 		(succ: string, pred: string) => {
@@ -417,21 +462,26 @@ function Board() {
 			if (tag === 'INPUT' || tag === 'TEXTAREA') return
 			if (e.key === 'Escape') {
 				if (depDel) setDepDel(null)
-				else if (deleteId) setDeleteId(null)
+				else if (deleteIds) setDeleteIds(null)
 				else if (showClear) setShowClear(false)
 				else if (ganttDlg) setGanttDlg(false)
 				else if (showSettings) setShowSettings(false)
 				else if (showAbout) setShowAbout(false)
 				else if (showGantt) setShowGantt(false)
-				else {
+				else if (showExport) {
+					setShowExport(false)
+					setExportText(null)
+				} else {
 					setDepPending(null)
 					setSelDep(null)
+					setSelectedIds(new Set())
 				}
 				return
 			}
 			if (e.key === 'Delete' || e.key === 'Backspace') {
 				if (selDep) removeDep(selDep)
-				else if (selectedId) requestDelete(selectedId)
+				else if (selectedIds.size > 0)
+					requestDeleteIds([...selectedIds])
 			}
 			if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
 				if (e.shiftKey) redo()
@@ -440,17 +490,18 @@ function Board() {
 			if (e.key === 'y' && (e.ctrlKey || e.metaKey)) redo()
 		},
 		[
-			selectedId,
+			selectedIds,
 			selDep,
 			depDel,
-			deleteId,
+			deleteIds,
 			showClear,
 			ganttDlg,
 			showSettings,
 			showAbout,
 			showGantt,
+			showExport,
 			removeDep,
-			requestDelete,
+			requestDeleteIds,
 			undo,
 			redo,
 		],
@@ -467,6 +518,31 @@ function Board() {
 		a.click()
 		URL.revokeObjectURL(a.href)
 	}, [tasks, ganttCfg])
+
+	const doExport = useCallback(
+		(kind: 'tsv' | 'csv' | 'issue' | 'mmd') => {
+			const text =
+				kind === 'issue'
+					? toTsv(issueRows(tasks, sched, ganttCfg, unit))
+					: kind === 'mmd'
+						? toMermaid(tasks, sched, ganttCfg, unit)
+						: kind === 'csv'
+							? toCsv(exportRows(tasks, sched, ganttCfg, unit))
+							: toTsv(exportRows(tasks, sched, ganttCfg, unit))
+			if (kind === 'csv') {
+				const blob = new Blob([text], { type: 'text/csv' })
+				const a = document.createElement('a')
+				a.href = URL.createObjectURL(blob)
+				a.download = `plesfeda-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.csv`
+				a.click()
+				URL.revokeObjectURL(a.href)
+			} else {
+				navigator.clipboard?.writeText(text).catch(() => {})
+			}
+			setExportText(text)
+		},
+		[tasks, sched, ganttCfg, unit],
+	)
 
 	const fileRef = useRef<HTMLInputElement>(null)
 	const openFile = useCallback(
@@ -487,7 +563,7 @@ function Board() {
 							),
 						)
 					setEditingParent(null)
-					setSelectedId(null)
+					setSelectedIds(new Set())
 				})
 				.catch(() => window.alert(t('Invalid file')))
 		},
@@ -506,16 +582,18 @@ function Board() {
 				effort: 0,
 			},
 		])
-		setSelectedId(id)
+		setSelectedIds(new Set([id]))
 	}, [tasks, commit])
 
-	const deleteTarget = deleteId ? tasks.find((x) => x.id === deleteId) : null
+	const singleId =
+		selectedIds.size === 1 ? [...selectedIds][0]! : null
 
 	const appStyle = {
 		...(colors.nodeFill && { '--node-fill': colors.nodeFill }),
 		...(colors.nodeBorder && { '--node-border': colors.nodeBorder }),
 		...(colors.nodeText && { '--node-text': colors.nodeText }),
 		...(colors.edge && { '--edge': colors.edge }),
+		...(colors.toolbarBg && { '--toolbar-bg': colors.toolbarBg }),
 	} as React.CSSProperties
 
 	return (
@@ -537,13 +615,15 @@ function Board() {
 					onEdgeDoubleClick={onEdgeDoubleClick}
 					onPaneClick={() => {
 						setEditingParent(null)
-						setSelectedId(null)
+						setSelectedIds(new Set())
 						setDepPending(null)
 						setSelDep(null)
 					}}
 					fitView
 					deleteKeyCode={null}
 					nodesConnectable={false}
+					multiSelectionKeyCode="Shift"
+					selectionKeyCode="Shift"
 				>
 					<Background variant={BackgroundVariant.Dots} gap={20} size={1} />
 					<Controls showInteractive={false} />
@@ -556,25 +636,26 @@ function Board() {
 					</div>
 					<button onClick={addTask}>{t('+ Task')}</button>
 					<button
-						disabled={!selectedId}
-						onClick={() => selectedId && actions.toggleOpen(selectedId)}
+						disabled={!singleId}
+						onClick={() => singleId && actions.toggleOpen(singleId)}
 					>
 						{t('Breakdown')}
 					</button>
 					<button
 						className={depPending ? 'active' : ''}
-						disabled={!selectedId && !depPending}
+						disabled={!singleId && !depPending}
 						onClick={() =>
-							setDepPending(depPending ? null : selectedId)
+							setDepPending(depPending ? null : singleId)
 						}
 					>
 						{t('Depends on')}
 					</button>
 					<button
-						disabled={!selectedId}
-						onClick={() => selectedId && requestDelete(selectedId)}
+						disabled={selectedIds.size === 0}
+						onClick={() => requestDeleteIds([...selectedIds])}
 					>
 						{t('Delete')}
+						{selectedIds.size > 1 ? ` (${selectedIds.size})` : ''}
 					</button>
 					<button
 						disabled={history.current.past.length === 0}
@@ -602,6 +683,17 @@ function Board() {
 						}}
 					>
 						{t('Gantt')}
+					</button>
+					<button
+						onClick={() => {
+							if (sched.cyclic || sched.errors.size > 0) {
+								window.alert(t('Resolve dependency errors first'))
+								return
+							}
+							setShowExport(true)
+						}}
+					>
+						{t('Export')}
 					</button>
 					<button
 						className="danger"
@@ -643,16 +735,29 @@ function Board() {
 					</div>
 				)}
 
-				{deleteTarget && (
-					<div className="modal-back" onClick={() => setDeleteId(null)}>
+				{deleteIds && (
+					<div className="modal-back" onClick={() => setDeleteIds(null)}>
 						<div className="modal" onClick={(e) => e.stopPropagation()}>
-							<h2>{t('Delete this task?')}</h2>
-							<div className="modal-sub">“{deleteTarget.name || 'task'}”</div>
+							<h2>
+								{deleteIds.length === 1
+									? t('Delete this task?')
+									: t('Delete selected tasks?')}
+							</h2>
+							<div className="modal-sub">
+								{deleteIds
+									.slice(0, 5)
+									.map(
+										(id) =>
+											`“${tasks.find((x) => x.id === id)?.name || 'task'}”`,
+									)
+									.join(' ')}
+								{deleteIds.length > 5 ? ` +${deleteIds.length - 5}` : ''}
+							</div>
 							<div className="modal-actions">
 								<button
 									onClick={() => {
-										commit(deleteTask(tasks, deleteTarget.id, 'promote'))
-										setDeleteId(null)
+										commit(deleteTasks(tasks, deleteIds, 'promote'))
+										setDeleteIds(null)
 									}}
 								>
 									{t('Keep children as roots')}
@@ -660,13 +765,15 @@ function Board() {
 								<button
 									className="danger"
 									onClick={() => {
-										commit(deleteTask(tasks, deleteTarget.id, 'subtree'))
-										setDeleteId(null)
+										commit(deleteTasks(tasks, deleteIds, 'subtree'))
+										setDeleteIds(null)
 									}}
 								>
 									{t('Delete subtree')}
 								</button>
-								<button onClick={() => setDeleteId(null)}>{t('Cancel')}</button>
+								<button onClick={() => setDeleteIds(null)}>
+									{t('Cancel')}
+								</button>
 							</div>
 						</div>
 					</div>
@@ -756,6 +863,7 @@ function Board() {
 									['Node border', 'nodeBorder'],
 									['Text color', 'nodeText'],
 									['Line color', 'edge'],
+									['Toolbar color', 'toolbarBg'],
 								] as const
 							).map(([label, key]) => (
 								<div className="field" key={key}>
@@ -862,6 +970,58 @@ function Board() {
 					/>
 				)}
 
+				{showExport && (
+					<div
+						className="modal-back"
+						onClick={() => {
+							setShowExport(false)
+							setExportText(null)
+						}}
+					>
+						<div
+							className="modal export"
+							onClick={(e) => e.stopPropagation()}
+						>
+							<h2>{t('Export')}</h2>
+							<div className="modal-sub">
+								{t('Dates are baked in from the current schedule.')}
+							</div>
+							<div className="modal-actions">
+								<button onClick={() => doExport('tsv')}>
+									{t('Copy TSV (for spreadsheets)')}
+								</button>
+								<button onClick={() => doExport('mmd')}>
+									{t('Copy Mermaid gantt')}
+								</button>
+								<button onClick={() => doExport('issue')}>
+									{t('Copy TSV for issue tracker bulk add')}
+								</button>
+								<button onClick={() => doExport('csv')}>
+									{t('Save CSV')}
+								</button>
+							</div>
+							{exportText !== null && (
+								<textarea
+									className="export-out"
+									readOnly
+									value={exportText}
+									onFocus={(e) => e.target.select()}
+								/>
+							)}
+							<div className="modal-actions export-close">
+								<button
+									onClick={() => {
+										setShowExport(false)
+										setExportText(null)
+									}}
+								>
+									{t('Close')}
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
+
 				{showClear && (
 					<div className="modal-back" onClick={() => setShowClear(false)}>
 						<div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -875,7 +1035,7 @@ function Board() {
 									onClick={() => {
 										commit([])
 										setEditingParent(null)
-										setSelectedId(null)
+										setSelectedIds(new Set())
 										setShowClear(false)
 									}}
 								>

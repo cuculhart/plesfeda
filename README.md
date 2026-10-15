@@ -60,6 +60,9 @@ Ghosts never persist into data — they materialize only when confirmed.
   the whole branch follows. Cycles are strictly rejected.
 - **Deleting a parent offers a choice:** promote its children to roots, or delete the
   whole subtree.
+- **Multi-select and bulk delete.** Shift+click toggles selection, Shift+drag selects
+  a region — useful for removing scattered leaves while keeping their parents
+  (parents in the selection still trigger the usual confirmation).
 - Branching factor is a variable (`MAX_CHILDREN`), not a methodology limit.
 - **WBS numbers are derived.** Every node shows `1.2.3`-style numbering computed from
   its position — reparenting and reordering renumber automatically. Nothing is stored.
@@ -90,6 +93,20 @@ Ghosts never persist into data — they materialize only when confirmed.
 A read-only report rendered from the schedule — simple calendar, baseline date,
 weekend/holiday exclusion, CP highlighting, milestones, and print-friendly
 two-dimensional pagination with per-page headers and page numbers.
+
+## Export
+
+The Export dialog hands off the computed schedule as a report — dates are baked
+in, so nothing needs Plesfeda's calendar to read them:
+
+- **TSV copy / CSV save** (UTF-8 BOM) — paste into Google Sheets, Excel, or any
+  table; WBS codes, levels, effort rollups, start/finish, predecessors, critical
+  flags, plus empty tracking columns (Assignee/Status/Progress/ActualStart/
+  ActualFinish) so the pasted sheet doubles as a progress tracker
+- **Issue-tracker TSV** — paste straight into a tracker tool's bulk issue
+  registration (subject / start / due / estimated hours)
+- **Mermaid `gantt`** — drop into GitHub, Notion, or docs; sections, `after`
+  deps, `crit`, and `milestone` are emitted
 
 ## i18n
 

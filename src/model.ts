@@ -99,6 +99,31 @@ export function deleteTask(
 		})
 }
 
+/** Delete several tasks at once — applied in order; ids already removed
+ *  by an ancestor's subtree delete are harmless no-ops. */
+export function deleteTasks(
+	tasks: Task[],
+	ids: string[],
+	mode: 'subtree' | 'promote',
+): Task[] {
+	return ids.reduce((ts, id) => deleteTask(ts, id, mode), tasks)
+}
+
+/** Keep only the ids with no selected ancestor — a selection that
+ *  contains both a node and its ancestor is already covered by the
+ *  ancestor, so normalizing avoids double deletes/moves. */
+export function topmost(tasks: Task[], ids: string[]): string[] {
+	const set = new Set(ids)
+	return ids.filter((id) => {
+		let cur = tasks.find((t) => t.id === id)
+		while (cur?.parentId) {
+			if (set.has(cur.parentId)) return false
+			cur = tasks.find((t) => t.id === cur!.parentId)
+		}
+		return true
+	})
+}
+
 /** Coerce unknown input (JSON import / localStorage) into a sane task
  *  list. Accepts a bare task array or `{ tasks: [...] }`. Returns null
  *  when the input has no task array at all. Malformed entries are
