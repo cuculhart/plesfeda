@@ -40,7 +40,7 @@ import {
 
 const nodeTypes = { task: TaskNode, slot: SlotNode }
 
-const APP_VERSION = '0.2.0'
+const APP_VERSION = '0.2.1'
 
 type Theme = 'system' | 'light' | 'quiet' | 'dark'
 type ResolvedTheme = Exclude<Theme, 'system'>
