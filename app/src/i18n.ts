@@ -10,6 +10,8 @@ const ja: Record<string, string> = {
 	'work breakdown structure editor': '作業分解構成図エディタ',
 	'Settings': '設定',
 	'Language': '言語',
+	'Grid': 'グリッド',
+	'Custom color': '色を指定',
 	'About': 'このツールについて',
 	'Close': '閉じる',
 	'A board for building real Work Breakdown Structures — breakdown first, schedule later.':

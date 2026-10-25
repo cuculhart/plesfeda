@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-	Background,
-	BackgroundVariant,
-	Controls,
-	ReactFlow,
-	ReactFlowProvider,
-	type Node,
-	type NodeChange,
-} from '@xyflow/react'
+import type { WorldObject } from '@kimetron/core'
+import { IsleCanvas, useEngine } from '@kimetron/react'
 import { BoardCtx, type BoardActions, type Unit } from './board-context'
+import { buildDoc, taskAt } from './doc'
 import { makeT, type Lang } from './i18n'
-import { buildGraph, NODE_H, NODE_W, type BoardNode, type Dir } from './layout'
+import type { Dir, SlotData, TaskData } from './layout'
 import {
 	canReparent,
 	deleteTasks,
@@ -22,7 +16,7 @@ import {
 	topmost,
 	type Task,
 } from './model'
-import { SlotNode, TaskNode } from './nodes/task-node'
+import { SlotCard, TaskCard } from './parts'
 import {
 	defaultGanttCfg,
 	GanttDialog,
@@ -38,9 +32,7 @@ import {
 	toTsv,
 } from './export'
 
-const nodeTypes = { task: TaskNode, slot: SlotNode }
-
-const APP_VERSION = '0.2.1'
+const APP_VERSION = '1.0.0'
 
 type Theme = 'system' | 'light' | 'quiet' | 'dark'
 type ResolvedTheme = Exclude<Theme, 'system'>
@@ -66,6 +58,8 @@ type UiColors = {
 	toolbarBg?: string
 }
 
+type GridPattern = 'lines' | 'dashed' | 'cross' | 'dots'
+
 type UiState = {
 	theme?: Theme
 	dir?: Dir
@@ -73,6 +67,8 @@ type UiState = {
 	colors?: UiColors
 	unit?: Unit
 	gantt?: GanttCfg
+	gridPattern?: GridPattern
+	gridColor?: string
 }
 
 const pick = <T,>(v: unknown, ok: readonly T[]): T | undefined =>
@@ -110,6 +106,14 @@ function loadUi(): UiState {
 					o.gantt !== undefined
 						? sanitizeGanttCfg(o.gantt)
 						: undefined,
+				gridPattern: pick<GridPattern>(o.gridPattern, [
+					'lines',
+					'dashed',
+					'cross',
+					'dots',
+				]),
+				gridColor:
+					typeof o.gridColor === 'string' ? o.gridColor : undefined,
 			}
 		}
 	} catch {
@@ -151,7 +155,19 @@ function loadTasks(): Task[] {
 	return SEED
 }
 
-function Board() {
+export default function App() {
+	const engine = useEngine({
+		units: 'px',
+		origin: 'top-left',
+		// RF dots: 20px gap, 1px radius — kimetron P47 grid.pattern
+		grid: { size: 20, snap: false, pattern: 'dots' },
+	})
+	const [gridPattern, setGridPattern] = useState<GridPattern>(
+		() => loadUi().gridPattern ?? 'dots',
+	)
+	const [gridColor, setGridColor] = useState<string | undefined>(
+		() => loadUi().gridColor,
+	)
 	const [tasks, setTasks] = useState<Task[]>(loadTasks)
 	const [editingParent, setEditingParent] = useState<string | null>(null)
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -242,9 +258,22 @@ function Board() {
 	useEffect(() => {
 		localStorage.setItem(
 			LS_UI,
-			JSON.stringify({ theme, dir, lang, colors, unit, gantt: ganttCfg }),
+			JSON.stringify({
+				theme,
+				dir,
+				lang,
+				colors,
+				unit,
+				gantt: ganttCfg,
+				gridPattern,
+				gridColor,
+			}),
 		)
-	}, [theme, dir, lang, colors, unit, ganttCfg])
+	}, [theme, dir, lang, colors, unit, ganttCfg, gridPattern, gridColor])
+
+	useEffect(() => {
+		engine.setGrid({ pattern: gridPattern, color: gridColor })
+	}, [engine, gridPattern, gridColor])
 
 	/** Bulk delete: normalize to topmost so overlapping subtrees aren't
 	 *  double-applied. The promote/subtree prompt only appears when some
@@ -260,6 +289,38 @@ function Board() {
 			)
 			if (needsConfirm) setDeleteIds(tops)
 			else commit(deleteTasks(tasks, tops, 'subtree'))
+		},
+		[tasks, commit],
+	)
+
+	const addDep = useCallback(
+		(succ: string, pred: string) => {
+			commit(
+				tasks.map((x) =>
+					x.id === succ
+						? { ...x, deps: [...new Set([...(x.deps ?? []), pred])] }
+						: x,
+				),
+			)
+		},
+		[tasks, commit],
+	)
+
+	const removeDep = useCallback(
+		(edgeId: string) => {
+			// edge id format: dep:<pred>-><succ>
+			const body = edgeId.slice(4)
+			const at = body.indexOf('->')
+			const pred = body.slice(0, at)
+			const succ = body.slice(at + 2)
+			commit(
+				tasks.map((x) =>
+					x.id === succ
+						? { ...x, deps: (x.deps ?? []).filter((d) => d !== pred) }
+						: x,
+				),
+			)
+			setSelDep(null)
 		},
 		[tasks, commit],
 	)
@@ -300,89 +361,118 @@ function Board() {
 			},
 			deactivateSlot: () => setEditingParent(null),
 			requestDelete: (id) => requestDeleteIds([id]),
+			pickDep: (id) => {
+				if (depPending && id !== depPending) addDep(depPending, id)
+			},
 		}),
-		[tasks, editingParent, commit, t, unit, requestDeleteIds],
+		[
+			tasks,
+			editingParent,
+			depPending,
+			commit,
+			t,
+			unit,
+			requestDeleteIds,
+			addDep,
+		],
 	)
 
 	const sched = useMemo(() => schedule(tasks), [tasks])
-	const graph = useMemo(
-		() => buildGraph(tasks, editingParent, dir, sched),
+	const built = useMemo(
+		() => buildDoc(tasks, editingParent, dir, sched),
 		[tasks, editingParent, dir, sched],
 	)
-	const edges = useMemo(
-		() => graph.edges.map((e) => ({ ...e, selected: e.id === selDep })),
-		[graph.edges, selDep],
-	)
-	const [nodes, setNodes] = useState<BoardNode[]>(graph.nodes)
-	useEffect(() => {
-		setNodes(
-			graph.nodes.map((n) => ({ ...n, selected: selectedIds.has(n.id) })),
-		)
-	}, [graph, selectedIds, setNodes])
 
-	const onNodesChange = useCallback(
-		(changes: NodeChange<BoardNode>[]) => {
-			for (const c of changes) {
-				if (c.type === 'select')
-					setSelectedIds((prev) => {
-						const next = new Set(prev)
-						if (c.selected && !c.id.startsWith('slot:'))
-							next.add(c.id)
-						else next.delete(c.id)
-						return next
-					})
-			}
-			// apply position changes during drag so the node follows the pointer
-			setNodes((nds) =>
-				nds.map((n) => {
-					const pos = changes.find(
-						(c) => c.type === 'position' && c.id === n.id,
-					)
-					return pos && pos.type === 'position' && pos.position
-						? { ...n, position: pos.position }
-						: n
-				}),
+	// positions the layout says each object should sit at — a moved object
+	// means a user drag; on pointer-up it becomes reparent/root detection
+	const expected = useMemo(() => {
+		const m = new Map<string, { x: number; y: number }>()
+		for (const o of built.objects) m.set(o.id, { x: o.x, y: o.y })
+		return m
+	}, [built])
+	const moved = useRef<Set<string>>(new Set())
+
+	// project the derived doc into the engine — patchDoc keeps engine-level
+	// undo clean (task-level history is ours, in `history`)
+	useEffect(() => {
+		engine.patchDoc({
+			...engine.doc,
+			objects: built.objects,
+			edges: built.edges,
+		})
+	}, [engine, built])
+
+	// mirror engine selection into app state; a single selected dep edge
+	// becomes selDep (Delete removes it), task ids become selectedIds
+	const onSelectionChange = useCallback((ids: ReadonlySet<string>) => {
+		const tasksSel = new Set<string>()
+		let dep: string | null = null
+		for (const id of ids) {
+			if (id.startsWith('dep:')) dep = id
+			else if (!id.startsWith('slot:') && !id.startsWith('e-'))
+				tasksSel.add(id)
+		}
+		setSelectedIds(tasksSel)
+		setSelDep(dep)
+	}, [])
+
+	const onDocChange = useCallback(() => {
+		for (const o of engine.doc.objects) {
+			if (o.kind !== 'task') continue
+			const exp = expected.get(o.id)
+			// a click can wobble the object by a px or two — only a real
+			// drag (>4px, px units) should count for reparent detection
+			if (
+				exp &&
+				Math.abs(o.x - exp.x) + Math.abs(o.y - exp.y) > 4
 			)
-		},
-		[setNodes],
-	)
+				moved.current.add(o.id)
+		}
+	}, [engine, expected])
 
 	/** Drop onto another node to reparent; drop on empty space makes it a root. */
-	const onNodeDragStop = useCallback(
-		(_e: unknown, node: Node) => {
-			if (node.type !== 'task') return
-			const cx = node.position.x + NODE_W / 2
-			const cy = node.position.y + NODE_H / 2
-			const target = graph.nodes.find(
-				(n) =>
-					n.type === 'task' &&
-					n.id !== node.id &&
-					cx >= n.position.x &&
-					cx <= n.position.x + NODE_W &&
-					cy >= n.position.y &&
-					cy <= n.position.y + NODE_H,
+	const onPointerUp = useCallback(() => {
+		const movedIds = [...moved.current]
+		moved.current.clear()
+		if (movedIds.length === 0) {
+			// clicks can wobble an object by a couple of px (below the drag
+			// threshold) — snap everything back to the derived layout
+			engine.patchDoc({
+				...engine.doc,
+				objects: built.objects,
+				edges: built.edges,
+			})
+			return
+		}
+		for (const id of movedIds) {
+			const o = engine.doc.objects.find((x) => x.id === id)
+			const task = tasks.find((x) => x.id === id)
+			if (!o || !task) continue
+			const target = taskAt(
+				engine.doc.objects,
+				o.x + o.w / 2,
+				o.y + o.h / 2,
+				id,
 			)
-			const task = tasks.find((x) => x.id === node.id)
-			if (!task) return
 			if (target) {
-				if (canReparent(tasks, node.id, target.id)) {
+				if (canReparent(tasks, id, target)) {
 					commit(
 						tasks.map((x) =>
-							x.id === node.id
+							x.id === id
 								? {
 										...x,
-										parentId: target.id,
-										order: nextOrder(tasks, target.id),
+										parentId: target,
+										order: nextOrder(tasks, target),
 									}
 								: x,
 						),
 					)
-					return
+					return // one structural commit rebuilds the doc
 				}
 			} else if (task.parentId !== null) {
 				commit(
 					tasks.map((x) =>
-						x.id === node.id
+						x.id === id
 							? {
 									...x,
 									parentId: null,
@@ -393,67 +483,49 @@ function Board() {
 				)
 				return
 			}
-			// no structural change — snap the node back to its layout position
-			setNodes(
-				graph.nodes.map((n) => ({
-					...n,
-					selected: selectedIds.has(n.id),
-				})),
-			)
-		},
-		[graph.nodes, tasks, commit, selectedIds],
-	)
+		}
+		// no structural change — rebuild snaps moved nodes back
+		engine.patchDoc({
+			...engine.doc,
+			objects: built.objects,
+			edges: built.edges,
+		})
+	}, [engine, tasks, commit, built])
 
-	const addDep = useCallback(
-		(succ: string, pred: string) => {
-			commit(
-				tasks.map((x) =>
-					x.id === succ
-						? { ...x, deps: [...new Set([...(x.deps ?? []), pred])] }
-						: x,
-				),
-			)
-		},
-		[tasks, commit],
-	)
-
-	const removeDep = useCallback(
-		(edgeId: string) => {
-			// edge id format: dep:<pred>-><succ>
-			const body = edgeId.slice(4)
-			const at = body.indexOf('->')
-			const pred = body.slice(0, at)
-			const succ = body.slice(at + 2)
-			commit(
-				tasks.map((x) =>
-					x.id === succ
-						? { ...x, deps: (x.deps ?? []).filter((d) => d !== pred) }
-						: x,
-				),
-			)
-			setSelDep(null)
-		},
-		[tasks, commit],
-	)
-
-	const onNodeClick = useCallback(
-		(_e: unknown, node: Node) => {
-			if (!depPending || node.type !== 'task' || node.id === depPending)
-				return
-			addDep(depPending, node.id)
-		},
-		[depPending, addDep],
-	)
-
-	const onEdgeClick = useCallback((_e: unknown, edge: { id: string }) => {
-		setSelDep(edge.id.startsWith('dep:') ? edge.id : null)
+	/** pane click → end dep-pick / slot edit (engine clears selection itself) */
+	const onPaneDown = useCallback((e: React.PointerEvent) => {
+		// gesture boundary: stale moved ids (e.g. pointer released over
+		// chrome) must not leak into the next click
+		moved.current.clear()
+		const el = e.target as HTMLElement
+		if (
+			el.closest('[data-ki-obj]') ||
+			el.closest('.toolbar') ||
+			el.closest('.modal') ||
+			el.closest('input,button,select,textarea')
+		)
+			return
+		setEditingParent(null)
+		setDepPending(null)
+		setSelDep(null)
 	}, [])
 
-	const onEdgeDoubleClick = useCallback(
-		(_e: unknown, edge: { id: string }) => {
-			if (edge.id.startsWith('dep:')) setDepDel(edge.id)
+	/** dep edge double-click → delete-confirm modal (the RF version had
+	 *  onEdgeDoubleClick; kimetron exposes edgeAt for the same hit) */
+	const onDoubleClick = useCallback(
+		(e: React.MouseEvent) => {
+			const el = e.target as HTMLElement
+			if (el.closest('[data-ki-obj]')) return // card dblclick = rename
+			const canvas = el.closest('.ki-canvas')
+			if (!canvas) return
+			const r = canvas.getBoundingClientRect()
+			const edge = engine.edgeAt({
+				x: e.clientX - r.left,
+				y: e.clientY - r.top,
+			})
+			if (edge?.id.startsWith('dep:')) setDepDel(edge.id)
 		},
-		[],
+		[engine],
 	)
 
 	const onKeyDown = useCallback(
@@ -596,38 +668,59 @@ function Board() {
 		...(colors.toolbarBg && { '--toolbar-bg': colors.toolbarBg }),
 	} as React.CSSProperties
 
+	const renderObject = useCallback(
+		(o: WorldObject) => {
+			const d = built.info.get(o.id)
+			if (!d) return undefined
+			const inner =
+				o.kind === 'task' ? (
+					<TaskCard
+						data={d as TaskData}
+						selected={selectedIds.has(o.id)}
+					/>
+				) : (
+					<SlotCard data={d as SlotData} />
+				)
+			// ZoomBox (sethera-v2 recipe): the .ki-obj container is sized in
+			// screen px (w×zoom) — draw the card at world size and scale it,
+			// or the fixed-px content overflows when zoomed out
+			const z = engine.viewport.zoom
+			return (
+				<div
+					className="kiz"
+					style={{
+						width: o.w,
+						height: o.h,
+						transform: `scale(${z})`,
+						transformOrigin: 'top left',
+						position: 'relative',
+					}}
+				>
+					{inner}
+				</div>
+			)
+		},
+		[built, selectedIds, engine],
+	)
+
 	return (
 		<BoardCtx.Provider value={actions}>
 			<div
 				className={`app ${resolvedTheme}${showGantt ? ' gantt-open' : ''}`}
 				style={appStyle}
 				onKeyDown={onKeyDown}
+				onPointerDown={onPaneDown}
+				onPointerUp={onPointerUp}
+				onDoubleClick={onDoubleClick}
 				tabIndex={-1}
 			>
-				<ReactFlow
-					nodes={nodes}
-					edges={edges}
-					nodeTypes={nodeTypes}
-					onNodesChange={onNodesChange}
-					onNodeDragStop={onNodeDragStop}
-					onNodeClick={onNodeClick}
-					onEdgeClick={onEdgeClick}
-					onEdgeDoubleClick={onEdgeDoubleClick}
-					onPaneClick={() => {
-						setEditingParent(null)
-						setSelectedIds(new Set())
-						setDepPending(null)
-						setSelDep(null)
-					}}
-					fitView
-					deleteKeyCode={null}
-					nodesConnectable={false}
-					multiSelectionKeyCode="Shift"
-					selectionKeyCode="Shift"
-				>
-					<Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-					<Controls showInteractive={false} />
-				</ReactFlow>
+				<IsleCanvas
+					engine={engine}
+					renderObject={renderObject}
+					onDocChange={onDocChange}
+					onSelectionChange={onSelectionChange}
+					style={{ position: 'absolute', inset: 0 }}
+				/>
 
 				<div className="toolbar">
 					<div className="brand">
@@ -850,11 +943,44 @@ function Board() {
 									value={theme}
 									onChange={(e) => setTheme(e.target.value as Theme)}
 								>
-									<option value="system">{t('System')}</option>
-									<option value="light">{t('Light')}</option>
-									<option value="quiet">{t('Quiet')}</option>
-									<option value="dark">{t('Dark')}</option>
+									<option value="system">System</option>
+									<option value="light">Light</option>
+									<option value="quiet">Quiet</option>
+									<option value="dark">Dark</option>
 								</select>
+							</div>
+							<div className="field">
+								<label>{t('Grid')}</label>
+								<select
+									value={gridPattern}
+									onChange={(e) =>
+										setGridPattern(e.target.value as GridPattern)
+									}
+								>
+									<option value="dots">Dots</option>
+									<option value="lines">Lines</option>
+									<option value="dashed">Dashed</option>
+									<option value="cross">Cross</option>
+								</select>
+							</div>
+							<div className="field">
+								<label>{t('Custom color')}</label>
+								<input
+									type="checkbox"
+									checked={gridColor !== undefined}
+									onChange={(e) =>
+										setGridColor(
+											e.target.checked ? '#c8d2e0' : undefined,
+										)
+									}
+								/>
+								{gridColor !== undefined && (
+									<input
+										type="color"
+										value={gridColor}
+										onChange={(e) => setGridColor(e.target.value)}
+									/>
+								)}
 							</div>
 							<div className="modal-sec">{t('Colors')}</div>
 							{(
@@ -925,7 +1051,7 @@ function Board() {
 								</div>
 								<div className="about-row">
 									<span className="k">{t('Built with')}</span>
-									<span>React Flow / Vite</span>
+									<span>Kimetron Isle / Vite</span>
 								</div>
 							</div>
 							<div className="modal-actions">
@@ -1050,13 +1176,5 @@ function Board() {
 				)}
 			</div>
 		</BoardCtx.Provider>
-	)
-}
-
-export function App() {
-	return (
-		<ReactFlowProvider>
-			<Board />
-		</ReactFlowProvider>
 	)
 }

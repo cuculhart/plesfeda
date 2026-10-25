@@ -1,23 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { useBoard } from '../board-context'
-import type { SlotData, TaskData } from '../layout'
+import { useBoard } from './board-context'
+import type { SlotData, TaskData } from './layout'
 
-export function TaskNode({ data, selected }: NodeProps) {
-	const { task, code, rollup, leaf, dir, span, critical, depErr } =
-		data as TaskData
+/** task card — port of the RF TaskNode (same classNames → styles.css as-is).
+ *  RF Handles are gone: dep wiring is click-pick, not a connect gesture. */
+export function TaskCard({ data, selected }: { data: TaskData; selected: boolean }) {
+	const { task, code, rollup, leaf, dir, span, critical, depErr } = data
 	const board = useBoard()
 	const [edit, setEdit] = useState<'name' | 'effort' | null>(null)
 	const shown = leaf ? task.effort : rollup
-	const tgt = dir === 'h' ? Position.Left : Position.Top
-	const src = dir === 'h' ? Position.Right : Position.Bottom
+	void dir // kept in data for layout parity; no handle sides needed anymore
 
 	return (
 		<div
 			className={`task-node${selected ? ' selected' : ''}${task.open ? ' open' : ''}${critical ? ' critical' : ''}${depErr ? ' dep-err' : ''}`}
 			onDoubleClick={() => setEdit('name')}
+			onClick={() => board.pickDep(task.id)}
 		>
-			<Handle type="target" position={tgt} className="wbs-handle" />
 			<div className="task-code">{code}</div>
 			{edit === 'name' ? (
 				<input
@@ -104,17 +103,15 @@ export function TaskNode({ data, selected }: NodeProps) {
 			>
 				×
 			</button>
-			<Handle type="source" position={src} className="wbs-handle" />
 		</div>
 	)
 }
 
-export function SlotNode({ data }: NodeProps) {
-	const { kind, parentId, dir } = data as SlotData
+export function SlotCard({ data }: { data: SlotData }) {
+	const { kind, parentId } = data
 	const board = useBoard()
 	const [val, setVal] = useState('')
 	const inputRef = useRef<HTMLInputElement>(null)
-	const tgt = dir === 'h' ? Position.Left : Position.Top
 
 	useEffect(() => {
 		if (kind === 'input') inputRef.current?.focus()
@@ -122,11 +119,7 @@ export function SlotNode({ data }: NodeProps) {
 
 	if (kind === 'input') {
 		return (
-			<div
-				className="slot-node input"
-				onMouseDown={(e) => e.stopPropagation()}
-			>
-				<Handle type="target" position={tgt} className="wbs-handle" />
+			<div className="slot-node input" onMouseDown={(e) => e.stopPropagation()}>
 				<input
 					ref={inputRef}
 					className="slot-input nodrag nopan"
@@ -163,7 +156,6 @@ export function SlotNode({ data }: NodeProps) {
 				board.activateSlot(parentId)
 			}}
 		>
-			<Handle type="target" position={tgt} className="wbs-handle" />
 			<span className="slot-label">{board.t('+ child')}</span>
 		</div>
 	)

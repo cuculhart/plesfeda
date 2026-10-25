@@ -1,2 +1,7 @@
 node_modules/
 dist/
+app/dist/
+*.local
+*.tsbuildinfo
+Thumbs.db
+.DS_Store

@@ -18,6 +18,8 @@ export type BoardActions = {
 	deactivateSlot(): void
 	/** request deletion of a task (modal choice when it has children) */
 	requestDelete(id: string): void
+	/** task click while a dep-pick is armed (adds the dependency) */
+	pickDep(id: string): void
 }
 
 export const BoardCtx = createContext<BoardActions | null>(null)
