@@ -1,4 +1,10 @@
-import { MarkerType, type Edge, type Node } from '@xyflow/react'
+// TODO(port): React Flow → Kimetron — buildGraph emits RF-shaped
+// nodes/edges; positions map onto WorldObjects, dep links onto engine
+// edges. These shims keep the layout math compiling until the board
+// wiring lands.
+type Node<T> = { id: string; type?: string; position: { x: number; y: number }; data: T; draggable?: boolean; width?: number; height?: number; className?: string; [k: string]: unknown }
+type Edge = { id: string; source: string; target: string; type?: string; className?: string; markerEnd?: { type: string; color?: string }; [k: string]: unknown }
+const MarkerType = { ArrowClosed: 'arrowclosed' } as const
 import {
 	childrenOf,
 	MAX_CHILDREN,

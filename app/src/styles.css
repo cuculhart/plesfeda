@@ -82,47 +82,14 @@ body,
 
 /* ---- board ---- */
 
-.react-flow {
+.ki-canvas {
 	background: var(--bg);
+	/* engine grid line color follows the RF dot tint */
+	--ki-grid: var(--ghost-border);
 }
 
-.react-flow__background pattern circle {
-	fill: var(--ghost-border);
-}
-
-.wbs-edge .react-flow__edge-path {
-	stroke: var(--edge);
-	stroke-width: 1.5;
-}
-
-.slot-edge .react-flow__edge-path {
-	stroke-dasharray: 4 4;
-}
-
-.dep-edge .react-flow__edge-path {
-	stroke: var(--dep);
-	stroke-width: 1.8;
-}
-
-.dep-edge.critical .react-flow__edge-path {
-	stroke: var(--critical);
-	stroke-width: 2.5;
-	stroke-dasharray: none;
-}
-
-.dep-edge.err .react-flow__edge-path {
-	stroke: var(--danger);
-	stroke-width: 2;
-}
-
-.dep-edge.selected .react-flow__edge-path {
-	stroke: var(--select);
-}
-
-.wbs-handle {
-	opacity: 0;
-	pointer-events: none;
-}
+/* edge styles moved into the kimetron Edge.style data (doc.ts);
+   selected edges use .ki-edge.ki-sel from the engine sheet */
 
 /* ---- task node ---- */
 
@@ -272,13 +239,6 @@ body,
 }
 
 /* ---- slot nodes (breakdown input) ---- */
-
-/* RF disables pointer events (inline style) on nodes whose
-   selectable/draggable/focusable are all false — re-enable so slots can
-   be clicked. !important is required to beat the inline style. */
-.react-flow__node-slot {
-	pointer-events: all !important;
-}
 
 .slot-node {
 	display: flex;
@@ -631,7 +591,7 @@ body,
 	}
 
 	/* while the gantt overlay is open, print only the gantt */
-	.gantt-open .react-flow,
+	.gantt-open .ki-canvas,
 	.gantt-open .toolbar,
 	.gantt-open .dep-banner {
 		display: none;
@@ -806,18 +766,23 @@ body,
 	color: var(--sub);
 }
 
-/* ---- react-flow controls ---- */
-
-.react-flow__controls {
-	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+/* ---- kimetron object chrome ----
+   injectStyles() appends the engine sheet at runtime — AFTER this file —
+   so equal-specificity rules lose; scope everything under .app to win.
+   .ki-obj draws a default border/fill our cards restyle; overflow:visible
+   lets the × / ⌄ buttons float outside the card edge (right:-7px /
+   bottom:-8px like the RF version).
+   ports exist only as edge anchors — the dots, resize handles and rotate
+   handle are affordances plesfeda doesn't use (task size is derived
+   from the layout, not the object) */
+.app .ki-obj {
+	border-width: 0;
+	background: transparent;
+	overflow: visible;
 }
 
-.react-flow__controls-button {
-	background: var(--btn);
-	border-bottom: 1px solid var(--btn-border);
-	fill: var(--text);
-}
-
-.react-flow__controls-button:hover {
-	background: var(--btn-hover);
+.app .ki-port,
+.app .ki-handle,
+.app .ki-rot {
+	display: none;
 }
